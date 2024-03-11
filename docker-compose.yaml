@@ -1,0 +1,57 @@
+---
+version: "3.7"
+name: datafog-pii-stream
+networks:
+  datafog_network:
+    driver: bridge
+
+services:
+  redpanda-1:
+    command:
+      - redpanda
+      - start
+      - --advertise-kafka-addr redpanda-1
+      - --overprovisioned
+      - --smp 1
+      - --memory 1G
+      - --reserve-memory 500M
+      - --node-id 0
+      - --check=false
+    image: docker.redpanda.com/redpandadata/redpanda:v23.2.2
+    container_name: redpanda-1
+    networks:
+      - datafog_network
+    ports:
+      - 9092:9092
+      - 9644:9644
+
+  rp-create-topics:
+    image: docker.vectorized.io/vectorized/redpanda:latest
+    networks:
+      - datafog_network
+    entrypoint: []
+    depends_on:
+      - redpanda-1
+    command: "sh -c 'echo Waiting for Red Panda Cluster to be ready... && while ! rpk cluster health -e --api-urls=redpanda-1:9644; do sleep 1; done && rpk --brokers redpanda-1:9092 topic create --partitions 1 tickets pii-detection; echo FINISH'"
+
+  streamjob:
+    image: pii-stream
+    build:
+      context: .
+      dockerfile: sparkjob/Dockerfile
+    networks:
+      - datafog_network
+    depends_on:
+      - redpanda-1
+
+  ui:
+    image: streamlit-ui
+    build:
+      context: .
+      dockerfile: ui/Dockerfile
+    networks:
+      - datafog_network
+    depends_on:
+      - redpanda-1
+    ports:
+      - 8501:8501
